@@ -1,0 +1,26 @@
+{
+	"name": "my-backend-worker",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"db:generate": "drizzle-kit generate"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"drizzle-kit": "^0.31.4",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.32.0"
+	},
+	"dependencies": {
+		"better-auth": "^1.3.7",
+		"better-auth-cloudflare": "^0.2.4",
+		"drizzle-orm": "^0.44.4",
+		"hono": "^4.9.2"
+	}
+}
