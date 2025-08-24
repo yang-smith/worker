@@ -53,7 +53,7 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
       
     } catch (error) {
       console.error(`${isLogin ? '登录' : '注册'}时出错:`, error);
-      alert(error.message);
+      alert((error as Error).message);
     } finally {
       setLoading(false);
     }
