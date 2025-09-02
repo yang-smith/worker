@@ -14,10 +14,10 @@ function App() {
     return <div className="loading">正在检查身份...</div>;
   }
 
-  // 修改处理认证成功的函数
-  const handleAuthSuccess = (userData: any, token?: string) => {
-    console.log('认证成功，用户:', userData, 'Token:', token);
-    signIn(userData, token);
+  // 简化认证成功处理
+  const handleAuthSuccess = (userData: any) => {
+    console.log('认证成功，用户:', userData);
+    signIn(userData); // 不传递token
   };
 
   return (

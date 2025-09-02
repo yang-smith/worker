@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { API_URLS } from '../config/api';
 
 interface AuthFormProps {
-  onAuthSuccess: (user: any, token?: string) => void; // 添加 token 参数
+  onAuthSuccess: (user: any) => void; // 移除token参数
 }
 
 export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
@@ -37,7 +37,7 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
+        credentials: 'include', // 关键：包含cookies
         body: JSON.stringify(body),
       });
 
@@ -49,15 +49,8 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
       const result = await response.json();
       console.log(`${isLogin ? '登录' : '注册'}成功:`, result);
       
-      // 🔑 提取 token 并传递给父组件
-      const token = result.token;
-      if (token) {
-        // 手动存储 token
-        localStorage.setItem('better-auth-token', token);
-        console.log('Token 已存储:', token);
-      }
-      
-      onAuthSuccess(result.user, token); // 传递 token
+      // 简化：直接传递用户数据，Better Auth会自动设置cookies
+      onAuthSuccess(result.user);
       
     } catch (error) {
       console.error(`${isLogin ? '登录' : '注册'}时出错:`, error);

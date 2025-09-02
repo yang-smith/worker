@@ -45,6 +45,14 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
                     type: "sqlite",
                     autoMigrate: false,
                 },
+                // 添加跨域cookie配置
+                advanced: {
+                    defaultCookieAttributes: {
+                        sameSite: "none",
+                        secure: true,
+                        partitioned: true // 新浏览器标准
+                    }
+                }
             }
         ),
         // Only add database adapter for CLI schema generation

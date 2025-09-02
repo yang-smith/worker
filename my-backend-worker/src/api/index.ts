@@ -149,12 +149,12 @@ apiApp.post("/topup", async c => {
     });
 });
 
-// 🔧 修改的认证函数 - 添加 Bearer Token 支持
+// 简化认证函数 - 只使用Better Auth标准方式
 async function authenticateUser(c: any) {
     try {
         const auth = c.get("auth");
         
-        // 方法1: 尝试 Better Auth 的标准会话检查（Cookie）
+        // 使用 Better Auth 标准会话检查
         const session = await auth.api.getSession({
             headers: c.req.raw.headers,
         });
@@ -165,31 +165,6 @@ async function authenticateUser(c: any) {
                 user: session.user,
                 userId: session.user.id 
             };
-        }
-
-        // 方法2: 如果会话检查失败，尝试 Bearer Token
-        const authHeader = c.req.header('Authorization');
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            const token = authHeader.substring(7); // 移除 "Bearer " 前缀
-            
-            try {
-                // 使用 Better Auth 验证 token
-                const tokenSession = await auth.api.getSession({
-                    headers: new Headers({
-                        'Authorization': `Bearer ${token}`
-                    })
-                });
-                
-                if (tokenSession?.session && tokenSession?.user) {
-                    return { 
-                        success: true, 
-                        user: tokenSession.user,
-                        userId: tokenSession.user.id 
-                    };
-                }
-            } catch (tokenError) {
-                console.log('Token 验证失败:', tokenError);
-            }
         }
 
         return { 
