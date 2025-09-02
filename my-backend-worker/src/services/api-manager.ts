@@ -4,6 +4,8 @@ import { userApiStatus, apiUsage } from "../db/api.schema";
 import { schema } from "../db/schema";
 import type { CloudflareBindings } from "../env";
 import { sql } from "drizzle-orm";
+import { CostCalculator, type MessageBasedCostEstimate } from "./cost-calculator";
+import { getModelConfig } from "../config/models";
 
 export class ApiManager {
     private db;
@@ -21,17 +23,14 @@ export class ApiManager {
             .get();
 
         if (!status) {
-            // 新用户，创建默认状态
             await this.createDefaultStatus(userId);
-            return { canUse: true, balance: 5.0 }; // 新用户送5美元
+            return { canUse: true, balance: 5.0 };
         }
 
-        // 检查订阅状态
         if (status.status !== 'active') {
             return { canUse: false, reason: '订阅已过期' };
         }
 
-        // 检查余额
         if (status.balance <= 0) {
             return { canUse: false, reason: '余额不足' };
         }
@@ -39,35 +38,33 @@ export class ApiManager {
         return { canUse: true, balance: status.balance };
     }
 
-    // 计算API成本（简化版）
-    calculateCost(model: string, inputTokens: number = 1000, outputTokens: number = 1000): number {
-        const pricing: Record<string, { input: number; output: number }> = {
-            'google/gemini-2.5-flash': { input: 0.000001, output: 0.000002 }, // 每1k token价格
-            'text-embedding-ada-002': { input: 0.0001, output: 0 },
-            'default': { input: 0.001, output: 0.002 }
-        };
-
-        const modelPricing = pricing[model] || pricing.default;
-        return (inputTokens / 1000) * modelPricing.input + (outputTokens / 1000) * modelPricing.output;
+    // 基于消息估算成本
+    estimateCostFromMessages(modelId: string, messages: any[]): MessageBasedCostEstimate {
+        const estimatedOutputTokens = CostCalculator.estimateOutputTokens(messages, modelId);
+        return CostCalculator.estimateCostFromMessages(modelId, messages, estimatedOutputTokens);
     }
 
-    // 扣除费用并记录使用
-    async deductAndRecord(userId: string, model: string, cost: number): Promise<boolean> {
+    // 检查预算
+    checkBudget(estimate: MessageBasedCostEstimate, userBalance: number): boolean {
+        return CostCalculator.isWithinBudget(estimate, userBalance);
+    }
+
+    // 扣费并记录（简化版）
+    async deductAndRecord(userId: string, estimate: MessageBasedCostEstimate): Promise<boolean> {
         try {
-            // 原子操作：扣费 + 记录
             const results = await this.db.batch([
                 // 扣除余额
                 this.db
                     .update(userApiStatus)
                     .set({
-                        balance: sql`balance - ${cost}`,
-                        totalSpent: sql`total_spent + ${cost}`,
+                        balance: sql`balance - ${estimate.totalCost}`,
+                        totalSpent: sql`total_spent + ${estimate.totalCost}`,
                         lastUsed: new Date(),
                         updatedAt: new Date(),
                     })
                     .where(and(
                         eq(userApiStatus.userId, userId),
-                        sql`balance >= ${cost}` // 确保余额足够
+                        sql`balance >= ${estimate.totalCost}`
                     )),
                 
                 // 记录使用
@@ -76,19 +73,27 @@ export class ApiManager {
                     .values({
                         id: crypto.randomUUID(),
                         userId,
-                        model,
-                        cost,
+                        model: estimate.model,
+                        cost: estimate.totalCost,
                         timestamp: new Date(),
                     })
             ]);
 
-            // 检查更新是否成功（第一个操作的结果）
             const updateResult = results[0] as any;
             return updateResult.success === true || updateResult.meta?.changes > 0;
         } catch (error) {
             console.error('扣费失败:', error);
             return false;
         }
+    }
+
+    // 获取模型端点信息
+    getModelEndpoint(modelId: string) {
+        const config = getModelConfig(modelId);
+        return {
+            url: config.endpoint,
+            provider: config.provider
+        };
     }
 
     // 创建默认用户状态
@@ -100,7 +105,7 @@ export class ApiManager {
                     userId,
                     plan: 'free',
                     status: 'active',
-                    balance: 5.0, // 新用户福利
+                    balance: 5.0,
                     totalSpent: 0,
                     updatedAt: new Date(),
                 });

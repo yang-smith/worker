@@ -222,6 +222,38 @@
   word-wrap: break-word;
   max-height: 400px;
   overflow-y: auto;
+  font-family: 'Courier New', Courier, monospace;
+  line-height: 1.5;
+}
+
+/* 流式传输相关样式 */
+.limits {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 0.25rem;
+}
+
+/* 流式传输时的动画效果 */
+.response-content pre:has(+ .streaming) {
+  border-color: #007bff;
+  box-shadow: 0 0 5px rgba(0, 123, 255, 0.3);
+}
+
+/* 复选框样式 */
+.form-group input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.form-group label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* 实时状态指示器 */
+.response-section h4 span {
+  font-size: 0.9rem;
+  font-weight: normal;
 }
 
 /* 加载状态 */

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { CloudflareBindings } from "../env";
 import { createAuth } from "../auth";
 import { ApiManager } from "../services/api-manager";
+import { getEnabledModels } from "../config/models";
 
 type Variables = {
     auth: ReturnType<typeof createAuth>;
@@ -9,7 +10,7 @@ type Variables = {
 
 const apiApp = new Hono<{ Bindings: CloudflareBindings; Variables: Variables }>();
 
-// API Proxy routes - 只使用 Better Auth 认证
+// API Proxy routes - 支持Stream传输
 apiApp.all("/proxy/*", async c => {
     try {
         // 1. 用户认证检查
@@ -31,21 +32,37 @@ apiApp.all("/proxy/*", async c => {
 
         // 3. 解析请求体
         const requestBody = await c.req.json().catch(() => ({}));
-        const model = requestBody.model || 'google/gemini-2.5-flash';
+        const modelId = requestBody.model || 'google/gemini-2.5-flash';
+        const messages = requestBody.messages || [];
         
-        // 4. 计算预估费用
-        const estimatedCost = apiManager.calculateCost(model);
+        // 4. 基于消息估算成本
+        const costEstimate = apiManager.estimateCostFromMessages(modelId, messages);
         
-        // 5. 根据模型决定路由
-        const routeInfo = getRouteInfo(model, c.env);
+        // 5. 检查预算
+        if (!apiManager.checkBudget(costEstimate, accessCheck.balance!)) {
+            return c.json({ 
+                error: '预估费用超出余额',
+                estimatedCost: costEstimate.totalCost,
+                balance: accessCheck.balance 
+            }, 403);
+        }
+
+        // 6. 预先扣费（基于估算）
+        const deductSuccess = await apiManager.deductAndRecord(authResult.userId!, costEstimate);
+        if (!deductSuccess) {
+            return c.json({ error: '扣费失败，请稍后重试' }, 500);
+        }
+
+        // 7. 获取模型端点
+        const endpoint = apiManager.getModelEndpoint(modelId);
         
-        // 6. 创建代理请求
-        const proxyRequest = new Request(routeInfo.url, {
+        // 8. 创建代理请求
+        const proxyRequest = new Request(endpoint.url, {
             method: c.req.method,
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${routeInfo.apiKey}`,
-                ...(routeInfo.url.includes('openrouter') ? {
+                'Authorization': `Bearer ${getApiKey(endpoint.provider, c.env)}`,
+                ...(endpoint.provider === 'openrouter' ? {
                     'HTTP-Referer': 'simple-test',
                     'X-Title': 'simple-agent'
                 } : {})
@@ -53,20 +70,26 @@ apiApp.all("/proxy/*", async c => {
             body: JSON.stringify(requestBody)
         });
         
-        // 7. 发送请求并返回响应
+        // 9. 直接返回响应（支持stream）
         const response = await fetch(proxyRequest);
-        const responseBody = await response.text();
         
-        // 8. 如果请求成功，扣除费用
-        if (response.ok) {
-            await apiManager.deductAndRecord(authResult.userId!, model, estimatedCost);
-        }
-        
-        return new Response(responseBody, {
+        // 创建新的响应，保持原有的stream特性
+        return new Response(response.body, {
             status: response.status,
+            statusText: response.statusText,
             headers: {
                 'Content-Type': response.headers.get('Content-Type') || 'application/json',
-                'X-Remaining-Balance': accessCheck.balance?.toString() || '0',
+                'X-Remaining-Balance': (accessCheck.balance! - costEstimate.totalCost).toFixed(6),
+                // 保持stream相关的headers
+                ...(response.headers.get('Content-Encoding') && {
+                    'Content-Encoding': response.headers.get('Content-Encoding')!
+                }),
+                ...(response.headers.get('Transfer-Encoding') && {
+                    'Transfer-Encoding': response.headers.get('Transfer-Encoding')!
+                }),
+                ...(response.headers.get('Cache-Control') && {
+                    'Cache-Control': response.headers.get('Cache-Control')!
+                })
             }
         });
         
@@ -101,37 +124,23 @@ apiApp.get("/stats", async c => {
     });
 });
 
-// 支持的模型列表
+// 更新模型列表路由
 apiApp.get("/models", async c => {
     const authResult = await authenticateUser(c);
     if (!authResult.success) {
         return c.json({ error: authResult.error }, 401);
     }
 
-    return c.json({
-        models: [
-            {
-                id: 'google/gemini-2.5-flash',
-                provider: 'openrouter',
-                category: 'chat',
-                pricing: {
-                    input: 0.000001,
-                    output: 0.000002,
-                    unit: 'per 1k tokens'
-                }
-            },
-            {
-                id: 'text-embedding-ada-002',
-                provider: 'dmxapi',
-                category: 'embedding',
-                pricing: {
-                    input: 0.0001,
-                    output: 0,
-                    unit: 'per 1k tokens'
-                }
-            }
-        ]
-    });
+    const models = getEnabledModels().map(model => ({
+        id: model.id,
+        name: model.name,
+        provider: model.provider,
+        category: model.category,
+        pricing: model.pricing,
+        limits: model.limits
+    }));
+
+    return c.json({ models });
 });
 
 // 余额充值路由（占位符）
@@ -181,21 +190,16 @@ async function authenticateUser(c: any) {
     }
 }
 
-// 路由信息函数
-function getRouteInfo(model: string, env: any) {
-    // embedding 模型使用 dmxapi
-    if (model.includes('embedding') || model.includes('embed')) {
-        return {
-            url: 'https://www.dmxapi.com/v1/chat/completions',
-            apiKey: env.DMXAPI_API_KEY
-        };
+// 工具函数：获取API密钥
+function getApiKey(provider: string, env: any): string {
+    switch (provider) {
+        case 'openrouter':
+            return env.OPENROUTER_API_KEY;
+        case 'dmxapi':
+            return env.DMXAPI_API_KEY;
+        default:
+            throw new Error(`未知的API提供商: ${provider}`);
     }
-    
-    // 其他模型使用 openrouter
-    return {
-        url: 'https://openrouter.ai/api/v1/chat/completions', 
-        apiKey: env.OPENROUTER_API_KEY
-    };
 }
 
 export default apiApp;

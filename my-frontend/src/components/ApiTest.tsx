@@ -14,12 +14,17 @@ interface ApiStats {
 
 interface Model {
   id: string;
+  name: string;
   provider: string;
   category: string;
   pricing: {
     input: number;
     output: number;
     unit: string;
+  };
+  limits?: {
+    maxTokens?: number;
+    rateLimit?: number;
   };
 }
 
@@ -30,12 +35,14 @@ export default function ApiTest() {
   const [response, setResponse] = useState<string>('');
   const [stats, setStats] = useState<ApiStats | null>(null);
   const [models, setModels] = useState<Model[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamEnabled, setStreamEnabled] = useState(true); // 新增：控制是否启用流式传输
 
-  // 统一的请求函数 - 只使用cookies
+  // 统一的请求函数
   const fetchWithCredentials = (url: string, options: RequestInit = {}) => {
     return fetch(url, {
       ...options,
-      credentials: 'include', // 所有请求都包含cookies
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...options.headers
@@ -72,7 +79,6 @@ export default function ApiTest() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.log('Models error response:', errorText);
         throw new Error(`获取模型列表失败: ${response.status} - ${errorText}`);
       }
 
@@ -86,7 +92,82 @@ export default function ApiTest() {
     }
   };
 
-  // 发送 AI API 请求
+  // 流式传输处理函数
+  const handleStreamResponse = async (response: Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('无法获取响应流');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullResponse = '';
+
+    setResponse(''); // 清空之前的响应
+    setIsStreaming(true);
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 保留最后一行（可能不完整）
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            
+            if (data === '[DONE]') {
+              setIsStreaming(false);
+              return fullResponse;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content || '';
+              if (content) {
+                fullResponse += content;
+                setResponse(prev => prev + content);
+              }
+            } catch (parseError) {
+              console.log('解析SSE数据失败:', data);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      setIsStreaming(false);
+    }
+
+    return fullResponse;
+  };
+
+  // 处理非流式响应
+  const handleNonStreamResponse = async (response: Response) => {
+    const responseText = await response.text();
+    
+    try {
+      const parsedResponse = JSON.parse(responseText);
+      if (parsedResponse.choices && parsedResponse.choices[0]) {
+        const content = parsedResponse.choices[0].message?.content || parsedResponse.choices[0].text || '无响应内容';
+        setResponse(content);
+        return content;
+      } else {
+        const formatted = JSON.stringify(parsedResponse, null, 2);
+        setResponse(formatted);
+        return formatted;
+      }
+    } catch (parseError) {
+      setResponse(`原始响应: ${responseText}`);
+      return responseText;
+    }
+  };
+
+  // 发送 AI API 请求 - 支持流式传输
   const sendApiRequest = async () => {
     if (!message.trim()) {
       alert('请输入消息内容！');
@@ -95,37 +176,61 @@ export default function ApiTest() {
 
     setLoading(true);
     setResponse('');
+    setIsStreaming(false);
 
     try {
       const requestBody = {
         model: model,
         messages: [{ role: 'user', content: message }],
-        max_tokens: 150,
-        temperature: 0.7
+        max_tokens: 1000,
+        temperature: 0.7,
+        stream: streamEnabled // 根据用户选择决定是否启用流式传输
       };
+
+      console.log('发送请求:', requestBody);
 
       const response = await fetchWithCredentials(API_URLS.PROXY_CHAT, {
         method: 'POST',
         body: JSON.stringify(requestBody)
       });
 
-      const responseText = await response.text();
+      console.log('响应状态:', response.status);
+      console.log('响应头:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
-        throw new Error(`API请求失败: ${response.status} - ${responseText}`);
+        const errorText = await response.text();
+        throw new Error(`API请求失败: ${response.status} - ${errorText}`);
       }
 
-      // 解析并显示响应
-      let parsedResponse;
-      try {
-        parsedResponse = JSON.parse(responseText);
-        if (parsedResponse.choices && parsedResponse.choices[0]) {
-          setResponse(parsedResponse.choices[0].message?.content || '无响应内容');
-        } else {
-          setResponse(JSON.stringify(parsedResponse, null, 2));
+      // 检查是否为流式响应
+      const contentType = response.headers.get('Content-Type') || '';
+      const isStreamResponse = contentType.includes('text/event-stream') || 
+                              contentType.includes('text/plain') && streamEnabled;
+
+      let finalResponse: string;
+      
+      if (isStreamResponse && streamEnabled) {
+        console.log('处理流式响应...');
+        finalResponse = await handleStreamResponse(response);
+      } else {
+        console.log('处理普通响应...');
+        finalResponse = await handleNonStreamResponse(response);
+      }
+
+      // 显示剩余余额
+      const remainingBalance = response.headers.get('X-Remaining-Balance');
+      if (remainingBalance) {
+        console.log('剩余余额:', remainingBalance);
+        // 可以更新UI显示余额
+        if (stats) {
+          setStats({
+            ...stats,
+            stats: {
+              ...stats.stats,
+              balance: parseFloat(remainingBalance)
+            }
+          });
         }
-      } catch (parseError) {
-        setResponse(`原始响应: ${responseText}`);
       }
 
     } catch (error) {
@@ -133,6 +238,7 @@ export default function ApiTest() {
       setResponse(`错误: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setLoading(false);
+      setIsStreaming(false);
     }
   };
 
@@ -144,7 +250,7 @@ export default function ApiTest() {
       <div className="api-info">
         <small>当前 API 地址: {API_CONFIG.BASE_URL}</small>
       </div>
-
+      
       {/* 用户统计信息 */}
       <div className="api-section">
         <h3>📊 账户信息</h3>
@@ -172,11 +278,11 @@ export default function ApiTest() {
             </div>
             <div className="info-item">
               <strong>余额：</strong>
-              <span>${stats.stats.balance.toFixed(4)}</span>
+              <span>${stats.stats.balance.toFixed(6)}</span>
             </div>
             <div className="info-item">
               <strong>总消费：</strong>
-              <span>${stats.stats.totalSpent.toFixed(4)}</span>
+              <span>${stats.stats.totalSpent.toFixed(6)}</span>
             </div>
             <div className="info-item">
               <strong>最后使用：</strong>
@@ -197,11 +303,16 @@ export default function ApiTest() {
           <div className="models-list">
             {models.map((modelInfo) => (
               <div key={modelInfo.id} className="model-item">
-                <strong>{modelInfo.id}</strong>
+                <strong>{modelInfo.name || modelInfo.id}</strong>
                 <span>({modelInfo.provider} - {modelInfo.category})</span>
                 <span className="pricing">
                   输入: ${modelInfo.pricing.input} / 输出: ${modelInfo.pricing.output} {modelInfo.pricing.unit}
                 </span>
+                {modelInfo.limits && (
+                  <span className="limits">
+                    最大Token: {modelInfo.limits.maxTokens} | 频率限制: {modelInfo.limits.rateLimit}/分钟
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -220,9 +331,20 @@ export default function ApiTest() {
             onChange={(e) => setModel(e.target.value)}
           >
             <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="gpt-4o-mini">GPT-4o Mini</option>
             <option value="text-embedding-ada-002">Text Embedding Ada 002</option>
-            <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
           </select>
+        </div>
+
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={streamEnabled}
+              onChange={(e) => setStreamEnabled(e.target.checked)}
+            />
+            启用流式传输 (Stream)
+          </label>
         </div>
 
         <div className="form-group">
@@ -237,14 +359,14 @@ export default function ApiTest() {
         </div>
 
         <button onClick={sendApiRequest} disabled={loading || !message.trim()}>
-          {loading ? '发送中...' : '发送请求'}
+          {loading ? (isStreaming ? '流式响应中...' : '发送中...') : '发送请求'}
         </button>
 
         {response && (
           <div className="response-section">
-            <h4>📝 响应结果:</h4>
+            <h4>📝 响应结果: {isStreaming && <span style={{color: '#007bff'}}>● 实时流式传输中...</span>}</h4>
             <div className="response-content">
-              <pre>{response}</pre>
+              <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>{response}</pre>
             </div>
           </div>
         )}
