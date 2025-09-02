@@ -1,9 +1,8 @@
 import { useState } from 'react';
-
-const AUTH_SERVICE_URL = 'https://my-backend-worker.zy892065502.workers.dev';
+import { API_URLS } from '../config/api';
 
 interface AuthFormProps {
-  onAuthSuccess: (user: any) => void;
+  onAuthSuccess: (user: any, token?: string) => void; // 添加 token 参数
 }
 
 export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
@@ -30,12 +29,12 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
     setLoading(true);
 
     try {
-      const endpoint = isLogin ? '/api/auth/sign-in/email' : '/api/auth/sign-up/email';
+      const apiUrl = isLogin ? API_URLS.SIGN_IN : API_URLS.SIGN_UP;
       const body = isLogin 
         ? { email, password }
         : { name, email, password };
 
-      const response = await fetch(`${AUTH_SERVICE_URL}${endpoint}`, {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -49,7 +48,16 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
 
       const result = await response.json();
       console.log(`${isLogin ? '登录' : '注册'}成功:`, result);
-      onAuthSuccess(result.user);
+      
+      // 🔑 提取 token 并传递给父组件
+      const token = result.token;
+      if (token) {
+        // 手动存储 token
+        localStorage.setItem('better-auth-token', token);
+        console.log('Token 已存储:', token);
+      }
+      
+      onAuthSuccess(result.user, token); // 传递 token
       
     } catch (error) {
       console.error(`${isLogin ? '登录' : '注册'}时出错:`, error);

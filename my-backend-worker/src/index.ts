@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createAuth } from "./auth";
+import apiApp from "./api";
 import type { CloudflareBindings } from "./env";
 
 type Variables = {
@@ -9,14 +10,19 @@ type Variables = {
 
 const app = new Hono<{ Bindings: CloudflareBindings; Variables: Variables }>();
 
-// CORS configuration for auth routes
+// CORS configuration for all routes
 app.use(
-    "/api/auth/**",
+    "*",
     cors({
-        origin: "http://localhost:5173", // In production, replace with your actual domain
-        allowHeaders: ["Content-Type", "Authorization"],
-        allowMethods: ["POST", "GET", "OPTIONS"],
-        exposeHeaders: ["Content-Length"],
+        origin: [
+            "http://localhost:5173", 
+            "https://worker-bj1.pages.dev",
+            "https://api.autumnriver.blue",
+            "https://autumnriver.blue"
+        ],
+        allowHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+        allowMethods: ["POST", "GET", "OPTIONS", "PUT", "DELETE"],
+        exposeHeaders: ["Content-Length", "X-Remaining-Balance"],
         maxAge: 600,
         credentials: true,
     })
@@ -34,6 +40,9 @@ app.all("/api/auth/*", async c => {
     const auth = c.get("auth");
     return auth.handler(c.req.raw);
 });
+
+// API management routes - 重新启用 API 管理模块
+app.route("/api", apiApp);
 
 // Home page with anonymous login
 app.get("/", async c => {

@@ -40,6 +40,11 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
                 rateLimit: {
                     enabled: false,
                 },
+                // 明确禁用数据库自动同步
+                database: {
+                    type: "sqlite",
+                    autoMigrate: false,
+                },
             }
         ),
         // Only add database adapter for CLI schema generation

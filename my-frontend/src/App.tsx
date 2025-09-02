@@ -14,6 +14,12 @@ function App() {
     return <div className="loading">正在检查身份...</div>;
   }
 
+  // 修改处理认证成功的函数
+  const handleAuthSuccess = (userData: any, token?: string) => {
+    console.log('认证成功，用户:', userData, 'Token:', token);
+    signIn(userData, token);
+  };
+
   return (
     <div className="app">
       <header>
@@ -24,7 +30,7 @@ function App() {
         {user ? (
           <UserProfile user={user} onSignOut={signOut} />
         ) : (
-          <AuthForm onAuthSuccess={signIn} />
+          <AuthForm onAuthSuccess={handleAuthSuccess} />
         )}
       </main>
     </div>

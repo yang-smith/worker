@@ -1,4 +1,6 @@
-const AUTH_SERVICE_URL = 'https://my-backend-worker.zy892065502.workers.dev';
+import { useState } from 'react';
+import { API_URLS } from '../config/api';
+import ApiTest from './ApiTest';
 
 interface User {
   id: string;
@@ -13,9 +15,11 @@ interface UserProfileProps {
 }
 
 export default function UserProfile({ user, onSignOut }: UserProfileProps) {
+  const [showApiTest, setShowApiTest] = useState(false);
+
   const handleSignOut = async () => {
     try {
-      await fetch(`${AUTH_SERVICE_URL}/api/auth/sign-out`, {
+      await fetch(API_URLS.SIGN_OUT, {
         method: 'POST',
         credentials: 'include',
       });
@@ -27,6 +31,23 @@ export default function UserProfile({ user, onSignOut }: UserProfileProps) {
       onSignOut();
     }
   };
+
+  if (showApiTest) {
+    return (
+      <div className="user-profile">
+        <div className="profile-header">
+          <h1>API 测试面板</h1>
+          <button 
+            onClick={() => setShowApiTest(false)}
+            className="back-button"
+          >
+            ← 返回个人信息
+          </button>
+        </div>
+        <ApiTest />
+      </div>
+    );
+  }
 
   return (
     <div className="user-profile">
@@ -57,6 +78,12 @@ export default function UserProfile({ user, onSignOut }: UserProfileProps) {
       </div>
       
       <div className="user-actions">
+        <button 
+          onClick={() => setShowApiTest(true)} 
+          className="api-test-btn"
+        >
+          🧪 API 测试
+        </button>
         <button onClick={handleSignOut} className="sign-out-btn">
           登出
         </button>

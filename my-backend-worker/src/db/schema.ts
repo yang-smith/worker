@@ -1,7 +1,8 @@
-import * as authSchema from "./auth.schema"; // This will be generated in a later step
+import * as authSchema from "./auth.schema";
+import * as apiSchema from "./api.schema";
 
 // Combine all schemas here for migrations
 export const schema = {
     ...authSchema,
-    // ... your other application schemas
+    ...apiSchema,
 } as const;
